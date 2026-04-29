@@ -288,7 +288,7 @@ export default function App() {
     const schema = '{"date":"DATE","total_macros":{"calories":0,"protein":0,"carbs":0,"fat":0},"breakfast":' + mealSchema + ',"lunch":' + mealSchema + ',"dinner":' + mealSchema + ',"snack":' + mealSchema + ',"tip":""}';
 
     const moodLine = state.mealMood?.trim()
-      ? "Tailor meals to this mood/craving: " + state.mealMood.trim()
+      ? "Honor Manny's preferences for today (could include flavors, cravings, cooking time, meal complexity, effort level, dietary considerations, or any other notes — interpret freely): " + state.mealMood.trim()
       : null;
     const frozenItems = state.ingredients.filter(isFrozen).map(i => i.name);
     const frozenLine = frozenItems.length > 0
@@ -460,7 +460,7 @@ export default function App() {
                 type="text"
                 value={state.mealMood || ""}
                 onChange={e => setState(s => ({ ...s, mealMood: e.target.value }))}
-                placeholder="e.g. savory, sweet, light, comfort food, beef, chicken"
+                placeholder="e.g. quick 15-min meals, craving beef, big elaborate dinner, light + savory..."
                 style={{ width: "100%", background: "#1a1b20", border: "1px solid #2a2a30", color: "#eee", fontSize: 13, padding: "9px 12px", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }}
               />
             </div>
