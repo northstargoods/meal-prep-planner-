@@ -131,6 +131,7 @@ function loadState() {
     weightLog: [{ date: new Date().toISOString().split("T")[0], weight: 155 }],
     todaysMeals: null,
     lastGenerated: null,
+    mealMood: "",
   };
 }
 
@@ -232,6 +233,36 @@ const MEAL_META = {
   snack:     { icon: "⚡", color: "#f9c74f", label: "SNACK" },
 };
 
+// ── Storage classification ───────────────────────────────────────────────────
+// Manny's rule: shelf-stable = goes in the pantry. Anything in the fridge,
+// freezer, or that goes bad on the counter is perishable.
+const PERISHABLE_KEYWORDS = [
+  "raspberry","raspberries","banana","avocado","mango","shrimp","egg","milk","cream","yogurt","berry","berries","fresh","produce","chicken thigh","chicken wing","ground beef","beef",
+  "bread","sourdough","bagel","bun","tortilla","loaf",
+  "cheese","cheddar","parmesan","parmigiano","cotija","chihuahua","queso","fresco",
+  "butter","crema",
+  "sweet potato","potato",
+  "pickle","guacamole","mayo","mayonnaise","mustard","ketchup",
+  "broth","stock",
+  "frozen","smoothie","melange",
+  "chicken","sausage",
+  "strawberry","blueberry","blackberry",
+];
+const FROZEN_KEYWORDS = [
+  "frozen","smoothie blend","melange","ground beef","shrimp","real good foods","lightly breaded chicken","chicken wings","chicken thigh",
+];
+
+function isPerishable(item) {
+  if (!item) return false;
+  if (typeof item.perishable === "boolean") return item.perishable;
+  return PERISHABLE_KEYWORDS.some(k => item.name.toLowerCase().includes(k));
+}
+function isFrozen(item) {
+  if (!item) return false;
+  if (typeof item.frozen === "boolean") return item.frozen;
+  return FROZEN_KEYWORDS.some(k => item.name.toLowerCase().includes(k));
+}
+
 export default function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("meals");
@@ -256,12 +287,22 @@ export default function App() {
     const mealSchema = '{"name":"","description":"one sentence overview","ingredients_with_amounts":[{"item":"ingredient name","amount":"e.g. 2 eggs or 1 cup rice"}],"recipe_steps":["Step 1...","Step 2...","Step 3..."],"macros":{"calories":0,"protein":0,"carbs":0,"fat":0}}';
     const schema = '{"date":"DATE","total_macros":{"calories":0,"protein":0,"carbs":0,"fat":0},"breakfast":' + mealSchema + ',"lunch":' + mealSchema + ',"dinner":' + mealSchema + ',"snack":' + mealSchema + ',"tip":""}';
 
+    const moodLine = state.mealMood?.trim()
+      ? "Tailor meals to this mood/craving: " + state.mealMood.trim()
+      : null;
+    const frozenItems = state.ingredients.filter(isFrozen).map(i => i.name);
+    const frozenLine = frozenItems.length > 0
+      ? "Frozen ingredients (must be thawed before use): " + frozenItems.join(", ") + ". If a meal uses any frozen ingredient, include a thaw reminder in that meal's description (e.g. \"Move ground beef from freezer to fridge the night before\")."
+      : null;
+
     const lines = [
       "You are a meal planner. Your ENTIRE response must be a single valid JSON object with no markdown, no code fences, no text before or after. Start with { and end with }.",
       "",
       "Plan a full day for Manny: 18yo male, 6ft, 155lbs, lean bulk, ~3100 cal/day, 175g protein. Today is " + today + ".",
       "Use ONLY these pantry ingredients (salt, pepper, oil, water always available): " + pantry,
       "Avoid repeating: " + (recent || "none"),
+      ...(moodLine ? [moodLine] : []),
+      ...(frozenLine ? [frozenLine] : []),
       "",
       "IMPORTANT: For each meal include:",
       "- ingredients_with_amounts: exact amounts for each ingredient (e.g. '3 eggs', '1 cup jasmine rice', '6oz chicken thigh')",
@@ -410,6 +451,19 @@ export default function App() {
         {/* ══ MEALS TAB ══ */}
         {tab === "meals" && (
           <div className="fade-up">
+            {/* Mood / craving input — feeds into meal generation */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#666", letterSpacing: "2px", marginBottom: 6 }}>
+                WHAT ARE YOU FEELING LIKE EATING TODAY?
+              </label>
+              <input
+                type="text"
+                value={state.mealMood || ""}
+                onChange={e => setState(s => ({ ...s, mealMood: e.target.value }))}
+                placeholder="e.g. savory, sweet, light, comfort food, beef, chicken"
+                style={{ width: "100%", background: "#1a1b20", border: "1px solid #2a2a30", color: "#eee", fontSize: 13, padding: "9px 12px", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }}
+              />
+            </div>
             {!meals ? (
               <div style={{ textAlign: "center", padding: "50px 20px" }}>
                 <div style={{ fontSize: 48, marginBottom: 16 }}>🍽️</div>
@@ -905,20 +959,27 @@ export default function App() {
 
 function PantryTab({ state, setState, generateMeals, loading, newIngredient, setNewIngredient }) {
   const [editingId, setEditingId] = useState(null);
-  const [editVal, setEditVal] = useState({ name: "", qty: "", unit: "" });
-  const [filter, setFilter] = useState("all"); // all | perishable | pantry
-
-  const PERISHABLE_KEYWORDS = ["raspberry","raspberries","banana","avocado","mango","shrimp","egg","milk","cream","yogurt","berry","berries","fresh","produce","chicken thigh","chicken wing","ground beef","beef"];
-  function isPerishable(name) {
-    return PERISHABLE_KEYWORDS.some(k => name.toLowerCase().includes(k));
-  }
+  const [editVal, setEditVal] = useState({ name: "", qty: "", unit: "", perishable: false, frozen: false });
+  const [filter, setFilter] = useState("all"); // all | perishable | pantry | frozen
+  const [searchQuery, setSearchQuery] = useState("");
 
   function startEdit(item) {
     setEditingId(item.id);
-    setEditVal({ name: item.name, qty: item.qty || "", unit: item.unit || "" });
+    setEditVal({
+      name: item.name,
+      qty: item.qty || "",
+      unit: item.unit || "",
+      perishable: isPerishable(item),
+      frozen: isFrozen(item),
+    });
   }
   function saveEdit(id) {
-    setState(s => ({ ...s, ingredients: s.ingredients.map(i => i.id === id ? { ...i, ...editVal } : i) }));
+    setState(s => ({
+      ...s,
+      ingredients: s.ingredients.map(i => i.id === id
+        ? { ...i, name: editVal.name, qty: editVal.qty, unit: editVal.unit, perishable: editVal.perishable, frozen: editVal.frozen }
+        : i),
+    }));
     setEditingId(null);
   }
   function deleteItem(id) {
@@ -927,13 +988,26 @@ function PantryTab({ state, setState, generateMeals, loading, newIngredient, set
   }
   function addIngredient() {
     if (!newIngredient.trim()) return;
-    setState(s => ({ ...s, ingredients: [...s.ingredients, { id: Date.now(), name: newIngredient.trim(), qty: "", unit: "" }] }));
+    const name = newIngredient.trim();
+    const lower = name.toLowerCase();
+    const newItem = {
+      id: Date.now(),
+      name,
+      qty: "",
+      unit: "",
+      perishable: PERISHABLE_KEYWORDS.some(k => lower.includes(k)),
+      frozen: FROZEN_KEYWORDS.some(k => lower.includes(k)),
+    };
+    setState(s => ({ ...s, ingredients: [...s.ingredients, newItem] }));
     setNewIngredient("");
   }
 
+  const q = searchQuery.trim().toLowerCase();
   const filtered = state.ingredients.filter(item => {
-    if (filter === "perishable") return isPerishable(item.name);
-    if (filter === "pantry") return !isPerishable(item.name);
+    if (filter === "perishable" && !(isPerishable(item) && !isFrozen(item))) return false;
+    if (filter === "pantry" && (isPerishable(item) || isFrozen(item))) return false;
+    if (filter === "frozen" && !isFrozen(item)) return false;
+    if (q && !item.name.toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -950,8 +1024,8 @@ function PantryTab({ state, setState, generateMeals, loading, newIngredient, set
       </div>
 
       {/* Filter tabs */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 14, borderBottom: "1px solid #1e1f24" }}>
-        {[["all","All"], ["perishable","🍌 Perishable"], ["pantry","🥫 Shelf Stable"]].map(([val, label]) => (
+      <div style={{ display: "flex", gap: 0, marginBottom: 14, borderBottom: "1px solid #1e1f24", flexWrap: "wrap" }}>
+        {[["all","All"], ["perishable","🍌 Perishable"], ["pantry","🥫 Shelf Stable"], ["frozen","❄️ Frozen"]].map(([val, label]) => (
           <button key={val} onClick={() => setFilter(val)} style={{
             background: "none", border: "none", padding: "7px 12px",
             color: filter === val ? "#f0e6d0" : "#555",
@@ -967,14 +1041,30 @@ function PantryTab({ state, setState, generateMeals, loading, newIngredient, set
         </div>
       )}
 
+      {state.ingredients.some(isFrozen) && (
+        <div style={{ background: "#1a1b20", border: "1px solid #5e81f433", padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#5e81f4", fontStyle: "italic" }}>
+          ❄️ Frozen items need to be thawed ahead of meals that use them.
+        </div>
+      )}
+
       {/* Add ingredient */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
         <input value={newIngredient} onChange={e => setNewIngredient(e.target.value)}
           onKeyDown={e => e.key === "Enter" && addIngredient()}
           placeholder="Add ingredient (press Enter)"
           style={{ flex: 1, background: "#1a1b20", border: "1px solid #2a2a30", color: "#eee", fontSize: 13, padding: "9px 12px", fontFamily: "'DM Mono', monospace" }}
         />
         <button onClick={addIngredient} style={{ background: "#f4a261", color: "#111", border: "none", padding: "9px 14px", fontSize: 16, fontWeight: 700 }}>+</button>
+      </div>
+
+      {/* Search ingredients */}
+      <div style={{ marginBottom: 14 }}>
+        <input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="🔍 Search ingredients..."
+          style={{ width: "100%", background: "#1a1b20", border: "1px solid #2a2a30", color: "#eee", fontSize: 13, padding: "9px 12px", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }}
+        />
       </div>
 
       {/* Ingredient list */}
@@ -995,6 +1085,20 @@ function PantryTab({ state, setState, generateMeals, loading, newIngredient, set
                     placeholder="Unit (oz, lbs...)" style={{ flex: 1, background: "#111216", border: "1px solid #2a2a30", color: "#eee", fontSize: 12, padding: "6px 8px", fontFamily: "'DM Mono', monospace" }}
                   />
                 </div>
+                <div style={{ display: "flex", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#aaa", fontFamily: "'DM Mono', monospace", cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!editVal.perishable}
+                      onChange={e => setEditVal(v => ({ ...v, perishable: e.target.checked }))}
+                    />
+                    🍌 Perishable
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#aaa", fontFamily: "'DM Mono', monospace", cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!editVal.frozen}
+                      onChange={e => setEditVal(v => ({ ...v, frozen: e.target.checked }))}
+                    />
+                    ❄️ Frozen
+                  </label>
+                </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => saveEdit(item.id)} style={{ flex: 1, background: "#52b788", color: "#111", border: "none", padding: "7px 0", fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "1px" }}>SAVE</button>
                   <button onClick={() => deleteItem(item.id)} style={{ flex: 1, background: "#e63946", color: "#fff", border: "none", padding: "7px 0", fontSize: 11, fontFamily: "'DM Mono', monospace", letterSpacing: "1px" }}>DELETE</button>
@@ -1003,9 +1107,10 @@ function PantryTab({ state, setState, generateMeals, loading, newIngredient, set
               </div>
             ) : (
               /* View mode */
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#15161a", border: `1px solid ${isPerishable(item.name) ? "#f4a26122" : "#1e1f24"}`, padding: "9px 13px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#15161a", border: `1px solid ${isFrozen(item) ? "#5e81f422" : isPerishable(item) ? "#f4a26122" : "#1e1f24"}`, padding: "9px 13px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-                  {isPerishable(item.name) && <span style={{ fontSize: 10, flexShrink: 0 }}>🍌</span>}
+                  {isPerishable(item) && !isFrozen(item) && <span style={{ fontSize: 10, flexShrink: 0 }}>🍌</span>}
+                  {isFrozen(item) && <span style={{ fontSize: 10, flexShrink: 0 }}>❄️</span>}
                   <span style={{ fontSize: 13, color: "#ddd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -1018,7 +1123,9 @@ function PantryTab({ state, setState, generateMeals, loading, newIngredient, set
           </div>
         ))}
         {filtered.length === 0 && (
-          <div style={{ textAlign: "center", padding: "30px 0", color: "#444", fontSize: 13, fontStyle: "italic" }}>No items in this category</div>
+          <div style={{ textAlign: "center", padding: "30px 0", color: "#444", fontSize: 13, fontStyle: "italic" }}>
+            {q ? `No matches for "${searchQuery}"` : "No items in this category"}
+          </div>
         )}
       </div>
     </div>
